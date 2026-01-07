@@ -48,6 +48,7 @@ dependencies = [
     "pydantic>=2.10",
     "opentelemetry-api>=1.28.0",
     "eval_type_backport>=0.2.2; python_version <= '3.9'",
+    "sse-starlette>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -58,8 +59,11 @@ dev = [
     "asgi-lifespan",
     "coverage",
     "httpx",
+    "httpx-sse",
     "inline-snapshot",
     "pytest",
+    "pytest-asyncio",
+    "pytest-mock",
     "ruff",
     "pyright",
 ]
