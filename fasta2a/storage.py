@@ -144,7 +144,7 @@ class InMemoryStorage(Storage[ContextT]):
 
 class StreamingStorageWrapper(Storage[ContextT]):
     """A storage wrapper that publishes streaming events when tasks are updated.
-    
+
     This wrapper intercepts update_task calls and publishes TaskStatusUpdateEvent
     and TaskArtifactUpdateEvent to the broker, enabling SSE streaming without
     modifying the underlying storage or worker implementations.

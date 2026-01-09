@@ -25,8 +25,13 @@ from fasta2a.broker import InMemoryBroker
 from fasta2a.schema import (
     Artifact,
     Message,
+    MessageSendParams,
+    StreamEvent,
+    StreamMessageRequest,
     TaskIdParams,
     TaskSendParams,
+    TaskStatus,
+    TaskStatusUpdateEvent,
     TextPart,
 )
 from fasta2a.storage import InMemoryStorage, StreamingStorageWrapper
@@ -35,6 +40,7 @@ pytestmark = pytest.mark.anyio
 
 
 # Test fixtures and helpers
+
 
 @asynccontextmanager
 async def create_test_client(app: FastA2A):
@@ -52,7 +58,7 @@ Context = list[Message]
 class EchoWorker(Worker[Context]):
     """A simple worker for testing that echoes messages."""
 
-    response_text: str = "Hello from test worker!"
+    response_text: str = 'Hello from test worker!'
     delay: float = 0.1
 
     async def run_task(self, params: TaskSendParams) -> None:
@@ -99,12 +105,12 @@ class EchoWorker(Worker[Context]):
 
 
 @asynccontextmanager
-async def create_streaming_app(response_text: str = "Hello!"):
+async def create_streaming_app(response_text: str = 'Hello!'):
     """Create a FastA2A app with streaming enabled."""
     broker = InMemoryBroker()
     base_storage = InMemoryStorage()
     streaming_storage = StreamingStorageWrapper(base_storage, broker)
-    
+
     worker = EchoWorker(
         broker=broker,
         storage=streaming_storage,
@@ -129,22 +135,24 @@ async def create_streaming_app(response_text: str = "Hello!"):
 
 # Tests for InMemoryBroker streaming
 
+
 class TestInMemoryBrokerStreaming:
     """Tests for InMemoryBroker pub/sub streaming."""
 
     async def test_subscribe_and_receive_events(self):
         """Test that subscribers receive events sent by send_stream_event."""
         broker = InMemoryBroker()
-        
+
         async with broker:
-            task_id = "test-task-123"
-            received_events = []
+            task_id = 'test-task-123'
+            received_events: list[StreamEvent] = []
 
             # Start subscriber in background
             async def subscriber():
                 async for event in broker.subscribe_to_stream(task_id):
                     received_events.append(event)
-                    if event.get('final', False):
+                    # Check if event has a 'final' field (for status events)
+                    if isinstance(event, dict) and event.get('final', False):
                         break
 
             subscriber_task = asyncio.create_task(subscriber())
@@ -153,37 +161,58 @@ class TestInMemoryBrokerStreaming:
             await asyncio.sleep(0.01)
 
             # Send events
-            await broker.send_stream_event(task_id, {'kind': 'status-update', 'final': False})
-            await broker.send_stream_event(task_id, {'kind': 'message', 'text': 'Hello'})
-            await broker.send_stream_event(task_id, {'kind': 'status-update', 'final': True})
+            status_event_1 = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id='test-context',
+                kind='status-update',
+                status=TaskStatus(state='working'),
+                final=False,
+            )
+            message_event = Message(
+                message_id='test-msg-1',
+                role='agent',
+                parts=[TextPart(kind='text', text='Hello')],
+                kind='message',
+            )
+            status_event_2 = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id='test-context',
+                kind='status-update',
+                status=TaskStatus(state='completed'),
+                final=True,
+            )
+            await broker.send_stream_event(task_id, status_event_1)
+            await broker.send_stream_event(task_id, message_event)
+            await broker.send_stream_event(task_id, status_event_2)
 
             # Wait for subscriber to finish
             await asyncio.wait_for(subscriber_task, timeout=1.0)
 
             assert len(received_events) == 3
             assert received_events[0]['kind'] == 'status-update'
-            assert received_events[1]['kind'] == 'message'
-            assert received_events[2]['final'] is True
+            assert received_events[1]['kind'] == 'message'  # Message has both kind and role
+            # Only check 'final' on status update events
+            assert received_events[2]['kind'] == 'status-update' and received_events[2]['final'] is True
 
     async def test_multiple_subscribers(self):
         """Test that multiple subscribers receive the same events."""
         broker = InMemoryBroker()
-        
+
         async with broker:
-            task_id = "test-task-456"
-            received_1 = []
-            received_2 = []
+            task_id = 'test-task-456'
+            received_1: list[StreamEvent] = []
+            received_2: list[StreamEvent] = []
 
             async def subscriber1():
                 async for event in broker.subscribe_to_stream(task_id):
                     received_1.append(event)
-                    if event.get('final', False):
+                    if isinstance(event, dict) and event.get('final', False):
                         break
 
             async def subscriber2():
                 async for event in broker.subscribe_to_stream(task_id):
                     received_2.append(event)
-                    if event.get('final', False):
+                    if isinstance(event, dict) and event.get('final', False):
                         break
 
             task1 = asyncio.create_task(subscriber1())
@@ -191,8 +220,26 @@ class TestInMemoryBrokerStreaming:
 
             await asyncio.sleep(0.01)
 
-            await broker.send_stream_event(task_id, {'kind': 'test', 'final': False})
-            await broker.send_stream_event(task_id, {'kind': 'done', 'final': True})
+            await broker.send_stream_event(
+                task_id,
+                TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id='test-context',
+                    kind='status-update',
+                    status=TaskStatus(state='working'),
+                    final=False,
+                ),
+            )
+            await broker.send_stream_event(
+                task_id,
+                TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id='test-context',
+                    kind='status-update',
+                    status=TaskStatus(state='completed'),
+                    final=True,
+                ),
+            )
 
             await asyncio.wait_for(asyncio.gather(task1, task2), timeout=1.0)
 
@@ -202,13 +249,23 @@ class TestInMemoryBrokerStreaming:
     async def test_no_subscribers_doesnt_error(self):
         """Test that sending events with no subscribers doesn't raise errors."""
         broker = InMemoryBroker()
-        
+
         async with broker:
             # Should not raise
-            await broker.send_stream_event("nonexistent-task", {'kind': 'test'})
+            await broker.send_stream_event(
+                'nonexistent-task',
+                TaskStatusUpdateEvent(
+                    task_id='nonexistent-task',
+                    context_id='test-context',
+                    kind='status-update',
+                    status=TaskStatus(state='working'),
+                    final=False,
+                ),
+            )
 
 
 # Tests for StreamingStorageWrapper
+
 
 class TestStreamingStorageWrapper:
     """Tests for StreamingStorageWrapper event publishing."""
@@ -218,7 +275,7 @@ class TestStreamingStorageWrapper:
         broker = InMemoryBroker()
         base_storage = InMemoryStorage()
         storage = StreamingStorageWrapper(base_storage, broker)
-        
+
         async with broker:
             # Create a task
             message = Message(
@@ -230,7 +287,7 @@ class TestStreamingStorageWrapper:
             task = await storage.submit_task('ctx-1', message)
             task_id = task['id']
 
-            received_events = []
+            received_events: list[StreamEvent] = []
 
             async def subscriber():
                 async for event in broker.subscribe_to_stream(task_id):
@@ -256,7 +313,7 @@ class TestStreamingStorageWrapper:
         broker = InMemoryBroker()
         base_storage = InMemoryStorage()
         storage = StreamingStorageWrapper(base_storage, broker)
-        
+
         async with broker:
             message = Message(
                 role='user',
@@ -267,12 +324,12 @@ class TestStreamingStorageWrapper:
             task = await storage.submit_task('ctx-1', message)
             task_id = task['id']
 
-            received_events = []
+            received_events: list[StreamEvent] = []
 
             async def subscriber():
                 async for event in broker.subscribe_to_stream(task_id):
                     received_events.append(event)
-                    if event.get('final', False):
+                    if isinstance(event, dict) and event.get('final', False):
                         break
 
             sub_task = asyncio.create_task(subscriber())
@@ -301,7 +358,7 @@ class TestStreamingStorageWrapper:
         broker = InMemoryBroker()
         base_storage = InMemoryStorage()
         storage = StreamingStorageWrapper(base_storage, broker)
-        
+
         async with broker:
             message = Message(
                 role='user',
@@ -312,12 +369,12 @@ class TestStreamingStorageWrapper:
             task = await storage.submit_task('ctx-1', message)
             task_id = task['id']
 
-            received_events = []
+            received_events: list[StreamEvent] = []
 
             async def subscriber():
                 async for event in broker.subscribe_to_stream(task_id):
                     received_events.append(event)
-                    if event.get('final', False):
+                    if isinstance(event, dict) and event.get('final', False):
                         break
 
             sub_task = asyncio.create_task(subscriber())
@@ -335,12 +392,14 @@ class TestStreamingStorageWrapper:
             # Should have: artifact, then final status
             assert len(received_events) == 2
             assert received_events[0]['kind'] == 'artifact-update'
-            assert received_events[0]['artifact']['name'] == 'result'
+            artifact = received_events[0]['artifact']
+            assert artifact.get('name') == 'result'  # Use .get() for NotRequired fields
             assert received_events[1]['kind'] == 'status-update'
             assert received_events[1]['final'] is True
 
 
 # Tests for FastA2A streaming endpoint
+
 
 class TestFastA2AStreaming:
     """Tests for the FastA2A message/stream SSE endpoint."""
@@ -356,7 +415,7 @@ class TestFastA2AStreaming:
 
     async def test_message_stream_returns_sse(self):
         """Test that message/stream returns SSE response."""
-        async with create_streaming_app(response_text="Test response") as app:
+        async with create_streaming_app(response_text='Test response') as app:
             async with create_test_client(app) as client:
                 payload = {
                     'jsonrpc': '2.0',
@@ -369,7 +428,7 @@ class TestFastA2AStreaming:
                             'kind': 'message',
                             'messageId': 'user-msg-1',
                         }
-                    }
+                    },
                 }
 
                 # Use streaming request
@@ -377,7 +436,7 @@ class TestFastA2AStreaming:
                     assert response.status_code == 200
                     assert 'text/event-stream' in response.headers.get('content-type', '')
 
-                    events = []
+                    events: list[Any] = []
                     async for line in response.aiter_lines():
                         if line.startswith('data: '):
                             data = json.loads(line[6:])
@@ -391,11 +450,18 @@ class TestFastA2AStreaming:
                     assert events[0]['result']['status']['state'] == 'submitted'
 
                     # Should have a working status
-                    working_events = [e for e in events if e['result'].get('kind') == 'status-update' and e['result'].get('status', {}).get('state') == 'working']
+                    working_events = [
+                        e
+                        for e in events
+                        if e['result'].get('kind') == 'status-update'
+                        and e['result'].get('status', {}).get('state') == 'working'
+                    ]
                     assert len(working_events) >= 1
 
                     # Should have a message with the response
-                    message_events = [e for e in events if e['result'].get('kind') == 'message' and e['result'].get('role') == 'agent']
+                    message_events = [
+                        e for e in events if e['result'].get('kind') == 'message' and e['result'].get('role') == 'agent'
+                    ]
                     assert len(message_events) >= 1
                     assert 'Test response' in message_events[0]['result']['parts'][0]['text']
 
@@ -420,11 +486,11 @@ class TestFastA2AStreaming:
                             'messageId': 'msg-1',
                             'contextId': context_id,
                         }
-                    }
+                    },
                 }
 
                 async with client.stream('POST', '/', json=payload) as response:
-                    events = []
+                    events: list[Any] = []
                     async for line in response.aiter_lines():
                         if line.startswith('data: '):
                             events.append(json.loads(line[6:]))
@@ -450,7 +516,7 @@ class TestFastA2AStreaming:
                             'kind': 'message',
                             'messageId': 'msg-1',
                         }
-                    }
+                    },
                 }
 
                 response = await client.post('/', json=payload)
@@ -462,6 +528,7 @@ class TestFastA2AStreaming:
 
 # Tests for TaskManager stream_message
 
+
 class TestTaskManagerStreamMessage:
     """Tests for TaskManager.stream_message method."""
 
@@ -470,51 +537,55 @@ class TestTaskManagerStreamMessage:
         broker = InMemoryBroker()
         base_storage = InMemoryStorage()
         streaming_storage = StreamingStorageWrapper(base_storage, broker)
-        
+
         # Use a longer delay to ensure we capture the initial task before it completes
         worker = EchoWorker(broker=broker, storage=streaming_storage, delay=0.2)
 
         async with broker:
             async with worker.run():
                 from fasta2a.task_manager import TaskManager
-                
+
                 task_manager = TaskManager(broker=broker, storage=streaming_storage)
                 async with task_manager:
-                    request = {
+                    request: StreamMessageRequest = {
                         'jsonrpc': '2.0',
                         'id': 'req-1',
                         'method': 'message/stream',
-                        'params': {
-                            'message': {
-                                'role': 'user',
-                                'parts': [{'kind': 'text', 'text': 'Test'}],
-                                'kind': 'message',
-                                'messageId': 'msg-1',
-                            }
-                        }
+                        'params': MessageSendParams(
+                            message=Message(
+                                role='user',
+                                parts=[TextPart(kind='text', text='Test')],
+                                kind='message',
+                                message_id='msg-1',
+                            )
+                        ),
                     }
 
-                    events = []
+                    events: list[StreamEvent] = []
                     async for event in task_manager.stream_message(request):
                         events.append(event)
                         # Stop when we get the final status
-                        if event.get('kind') == 'status-update' and event.get('final'):
+                        if isinstance(event, dict) and event.get('kind') == 'status-update' and event.get('final'):
                             break
 
                     # Should have at least: task, working status, message, final status
                     assert len(events) >= 4
-                    
+
                     # First event should be the task (submitted state)
                     assert events[0]['kind'] == 'task'
-                    
+
                     # Should have a working status update
-                    working_events = [e for e in events if e.get('kind') == 'status-update' and e.get('status', {}).get('state') == 'working']
+                    working_events = [
+                        e
+                        for e in events
+                        if e.get('kind') == 'status-update' and e.get('status', {}).get('state') == 'working'
+                    ]
                     assert len(working_events) >= 1
-                    
+
                     # Should have an agent message
                     message_events = [e for e in events if e.get('kind') == 'message' and e.get('role') == 'agent']
                     assert len(message_events) >= 1
-                    
+
                     # Last event should be final status
                     assert events[-1]['kind'] == 'status-update'
                     assert events[-1]['final'] is True
