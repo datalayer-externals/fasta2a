@@ -10,11 +10,12 @@ import anyio
 from opentelemetry.trace import get_tracer, use_span
 from typing_extensions import assert_never
 
+from .schema import TaskArtifactUpdateEvent, TaskStatusUpdateEvent
 from .storage import ContextT, Storage
 
 if TYPE_CHECKING:
     from .broker import Broker, TaskOperation
-    from .schema import Artifact, Message, TaskIdParams, TaskSendParams
+    from .schema import Artifact, Message, TaskIdParams, TaskSendParams, TaskState
 
 tracer = get_tracer(__name__)
 
@@ -55,6 +56,66 @@ class Worker(ABC, Generic[ContextT]):
                         assert_never(task_operation)
         except Exception:
             await self.storage.update_task(task_operation['params']['id'], state='failed')
+
+    async def update_task(
+        self,
+        task_id: str,
+        state: TaskState,
+        new_artifacts: list[Artifact] | None = None,
+        new_messages: list[Message] | None = None,
+    ) -> None:
+        """Update a task's state in storage and publish streaming events to the broker.
+
+        This is the primary method workers should use to update task state. It handles
+        both persisting the update and notifying any stream subscribers.
+        """
+        task = await self.storage.update_task(task_id, state, new_artifacts, new_messages)
+
+        final = state in ('completed', 'failed', 'canceled')
+
+        # For non-final updates, publish status first
+        if not final:
+            await self.broker.send_stream_event(
+                task_id,
+                TaskStatusUpdateEvent(
+                    kind='status-update',
+                    task_id=task_id,
+                    context_id=task['context_id'],
+                    status=task['status'],
+                    final=False,
+                ),
+            )
+
+        # Publish message events before final status so subscribers receive them
+        if new_messages:
+            for message in new_messages:
+                await self.broker.send_stream_event(task_id, message)
+
+        # Publish artifact events
+        if new_artifacts:
+            for artifact in new_artifacts:
+                await self.broker.send_stream_event(
+                    task_id,
+                    TaskArtifactUpdateEvent(
+                        kind='artifact-update',
+                        task_id=task_id,
+                        context_id=task['context_id'],
+                        artifact=artifact,
+                    ),
+                )
+
+        # For final updates, publish status last (after messages and artifacts)
+        if final:
+            await self.broker.send_stream_event(
+                task_id,
+                TaskStatusUpdateEvent(
+                    kind='status-update',
+                    task_id=task_id,
+                    context_id=task['context_id'],
+                    status=task['status'],
+                    final=True,
+                ),
+            )
 
     @abstractmethod
     async def run_task(self, params: TaskSendParams) -> None: ...

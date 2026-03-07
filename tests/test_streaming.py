@@ -1,7 +1,7 @@
 """Tests for the SSE streaming feature in fasta2a.
 
 This module tests:
-- StreamingStorageWrapper event publishing
+- Worker.update_task() streaming event publishing
 - InMemoryBroker pub/sub for streaming
 - TaskManager stream_message method
 - FastA2A message/stream endpoint
@@ -34,7 +34,7 @@ from fasta2a.schema import (
     TaskStatusUpdateEvent,
     TextPart,
 )
-from fasta2a.storage import InMemoryStorage, StreamingStorageWrapper
+from fasta2a.storage import InMemoryStorage
 
 pytestmark = pytest.mark.anyio
 
@@ -66,7 +66,7 @@ class EchoWorker(Worker[Context]):
         assert task is not None
 
         # Update to working state
-        await self.storage.update_task(task['id'], state='working')
+        await self.update_task(task['id'], state='working')
 
         # Simulate some work
         await asyncio.sleep(self.delay)
@@ -87,7 +87,7 @@ class EchoWorker(Worker[Context]):
         )
 
         # Complete the task with message and artifact
-        await self.storage.update_task(
+        await self.update_task(
             task['id'],
             state='completed',
             new_messages=[message],
@@ -95,7 +95,7 @@ class EchoWorker(Worker[Context]):
         )
 
     async def cancel_task(self, params: TaskIdParams) -> None:
-        await self.storage.update_task(params['id'], state='canceled')
+        await self.update_task(params['id'], state='canceled')
 
     def build_message_history(self, history: list[Message]) -> list[Any]:
         return history
@@ -108,12 +108,11 @@ class EchoWorker(Worker[Context]):
 async def create_streaming_app(response_text: str = 'Hello!'):
     """Create a FastA2A app with streaming enabled."""
     broker = InMemoryBroker()
-    base_storage = InMemoryStorage()
-    streaming_storage = StreamingStorageWrapper(base_storage, broker)
+    storage = InMemoryStorage()
 
     worker = EchoWorker(
         broker=broker,
-        storage=streaming_storage,
+        storage=storage,
         response_text=response_text,
     )
 
@@ -124,7 +123,7 @@ async def create_streaming_app(response_text: str = 'Hello!'):
                 yield
 
     app = FastA2A(
-        storage=streaming_storage,
+        storage=storage,
         broker=broker,
         streaming=True,
         lifespan=lifespan,
@@ -264,17 +263,17 @@ class TestInMemoryBrokerStreaming:
             )
 
 
-# Tests for StreamingStorageWrapper
+# Tests for Worker.update_task() streaming events
 
 
-class TestStreamingStorageWrapper:
-    """Tests for StreamingStorageWrapper event publishing."""
+class TestWorkerUpdateTask:
+    """Tests for Worker.update_task() event publishing."""
 
     async def test_publishes_status_update_on_working(self):
         """Test that updating to 'working' publishes a status-update event."""
         broker = InMemoryBroker()
-        base_storage = InMemoryStorage()
-        storage = StreamingStorageWrapper(base_storage, broker)
+        storage = InMemoryStorage()
+        worker = EchoWorker(broker=broker, storage=storage)
 
         async with broker:
             # Create a task
@@ -298,8 +297,8 @@ class TestStreamingStorageWrapper:
             sub_task = asyncio.create_task(subscriber())
             await asyncio.sleep(0.01)
 
-            # Update to working
-            await storage.update_task(task_id, state='working')
+            # Update to working via worker
+            await worker.update_task(task_id, state='working')
 
             await asyncio.wait_for(sub_task, timeout=1.0)
 
@@ -311,8 +310,8 @@ class TestStreamingStorageWrapper:
     async def test_publishes_message_before_final_status(self):
         """Test that messages are published before the final status update."""
         broker = InMemoryBroker()
-        base_storage = InMemoryStorage()
-        storage = StreamingStorageWrapper(base_storage, broker)
+        storage = InMemoryStorage()
+        worker = EchoWorker(broker=broker, storage=storage)
 
         async with broker:
             message = Message(
@@ -335,14 +334,14 @@ class TestStreamingStorageWrapper:
             sub_task = asyncio.create_task(subscriber())
             await asyncio.sleep(0.01)
 
-            # Complete with a new message
+            # Complete with a new message via worker
             agent_message = Message(
                 role='agent',
                 parts=[TextPart(text='Hi there!', kind='text')],
                 kind='message',
                 message_id='msg-2',
             )
-            await storage.update_task(task_id, state='completed', new_messages=[agent_message])
+            await worker.update_task(task_id, state='completed', new_messages=[agent_message])
 
             await asyncio.wait_for(sub_task, timeout=1.0)
 
@@ -356,8 +355,8 @@ class TestStreamingStorageWrapper:
     async def test_publishes_artifacts(self):
         """Test that artifacts are published."""
         broker = InMemoryBroker()
-        base_storage = InMemoryStorage()
-        storage = StreamingStorageWrapper(base_storage, broker)
+        storage = InMemoryStorage()
+        worker = EchoWorker(broker=broker, storage=storage)
 
         async with broker:
             message = Message(
@@ -385,7 +384,7 @@ class TestStreamingStorageWrapper:
                 name='result',
                 parts=[TextPart(text='Result data', kind='text')],
             )
-            await storage.update_task(task_id, state='completed', new_artifacts=[artifact])
+            await worker.update_task(task_id, state='completed', new_artifacts=[artifact])
 
             await asyncio.wait_for(sub_task, timeout=1.0)
 
@@ -535,17 +534,16 @@ class TestTaskManagerStreamMessage:
     async def test_stream_message_yields_events_in_order(self):
         """Test that stream_message yields events: task, status updates, messages, final status."""
         broker = InMemoryBroker()
-        base_storage = InMemoryStorage()
-        streaming_storage = StreamingStorageWrapper(base_storage, broker)
+        storage = InMemoryStorage()
 
         # Use a longer delay to ensure we capture the initial task before it completes
-        worker = EchoWorker(broker=broker, storage=streaming_storage, delay=0.2)
+        worker = EchoWorker(broker=broker, storage=storage, delay=0.2)
 
         async with broker:
             async with worker.run():
                 from fasta2a.task_manager import TaskManager
 
-                task_manager = TaskManager(broker=broker, storage=streaming_storage)
+                task_manager = TaskManager(broker=broker, storage=storage)
                 async with task_manager:
                     request: StreamMessageRequest = {
                         'jsonrpc': '2.0',
