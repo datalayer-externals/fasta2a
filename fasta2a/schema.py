@@ -93,6 +93,15 @@ class AgentCapabilities(TypedDict):
     state_transition_history: NotRequired[bool]
     """Whether the agent exposes status change history for tasks."""
 
+    extensions: NotRequired[list[AgentExtension]]
+    """A2A extensions supported by this agent.
+
+    Each extension is declared as an ``AgentExtension`` object with a
+    unique ``uri``, optional ``description``, ``required`` flag, and
+    ``params`` configuration.  Clients activate extensions by sending
+    the selected URIs in the ``A2A-Extensions`` HTTP header.
+    """
+
 
 @pydantic.with_config({'alias_generator': to_camel})
 class HttpSecurityScheme(TypedDict):

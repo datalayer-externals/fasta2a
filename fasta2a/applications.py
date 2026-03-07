@@ -17,6 +17,7 @@ from .broker import Broker
 from .schema import (
     AgentCapabilities,
     AgentCard,
+    AgentExtension,
     AgentProvider,
     Skill,
     StreamMessageResponse,
@@ -45,6 +46,7 @@ class FastA2A(Starlette):
         description: str | None = None,
         provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
+        extensions: list[AgentExtension] | None = None,
         docs_url: str | None = '/docs',
         streaming: bool = True,
         # Starlette
@@ -71,6 +73,7 @@ class FastA2A(Starlette):
         self.description = description
         self.provider = provider
         self.skills = skills or []
+        self.extensions = extensions or []
         self.docs_url = docs_url
         self.streaming = streaming
         # NOTE: For now, I don't think there's any reason to support any other input/output modes.
@@ -96,6 +99,11 @@ class FastA2A(Starlette):
 
     async def _agent_card_endpoint(self, request: Request) -> Response:
         if self._agent_card_json_schema is None:
+            capabilities = AgentCapabilities(
+                streaming=self.streaming, push_notifications=False, state_transition_history=False
+            )
+            if self.extensions:
+                capabilities['extensions'] = self.extensions
             agent_card = AgentCard(
                 name=self.name,
                 description=self.description or 'An AI agent exposed as an A2A agent.',
@@ -105,9 +113,7 @@ class FastA2A(Starlette):
                 skills=self.skills,
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
-                capabilities=AgentCapabilities(
-                    streaming=self.streaming, push_notifications=False, state_transition_history=False
-                ),
+                capabilities=capabilities,
             )
             if self.provider is not None:
                 agent_card['provider'] = self.provider
@@ -134,6 +140,14 @@ class FastA2A(Starlette):
         """
         data = await request.body()
         a2a_request = a2a_request_ta.validate_json(data)
+
+        # Parse activated extensions from the A2A-Extensions header
+        extensions_header = request.headers.get('a2a-extensions', '')
+        activated_extensions: list[str] = (
+            [uri.strip() for uri in extensions_header.split(',') if uri.strip()] if extensions_header else []
+        )
+        # Stash on the request state so workers / handlers can inspect them
+        request.state.activated_extensions = activated_extensions
 
         if a2a_request['method'] == 'message/send':
             jsonrpc_response = await self.task_manager.send_message(a2a_request)
