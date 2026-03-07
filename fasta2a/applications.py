@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,12 +20,11 @@ from .schema import (
     AgentCard,
     AgentProvider,
     Skill,
-    StreamMessageResponse,
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
+    stream_event_ta,
     stream_message_request_ta,
-    stream_message_response_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager
@@ -46,7 +46,7 @@ class FastA2A(Starlette):
         provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
         docs_url: str | None = '/docs',
-        streaming: bool = False,
+        streaming: bool = True,
         # Starlette
         debug: bool = False,
         routes: Sequence[Route] | None = None,
@@ -145,14 +145,14 @@ class FastA2A(Starlette):
             async def sse_generator():
                 request_id = stream_request.get('id')
                 async for event in self.task_manager.stream_message(stream_request):
-                    jsonrpc_response = StreamMessageResponse(
-                        jsonrpc='2.0',
-                        id=request_id,
-                        result=event,
-                    )
-                    yield stream_message_response_ta.dump_json(
-                        jsonrpc_response, by_alias=True
-                    ).decode()
+                    # Serialize event to ensure proper camelCase conversion
+                    event_dict = stream_event_ta.dump_python(event, mode='json', by_alias=True)
+
+                    # Wrap in JSON-RPC response
+                    jsonrpc_response = {'jsonrpc': '2.0', 'id': request_id, 'result': event_dict}
+
+                    # Convert to JSON string
+                    yield json.dumps(jsonrpc_response)
 
             # Return SSE response
             return EventSourceResponse(sse_generator())
