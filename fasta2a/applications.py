@@ -154,7 +154,6 @@ class FastA2A(Starlette):
                     # Convert to JSON string
                     yield json.dumps(jsonrpc_response)
 
-            # Return SSE response
             return EventSourceResponse(sse_generator())
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
