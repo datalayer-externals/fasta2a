@@ -148,9 +148,7 @@ class FastA2A(Starlette):
                         id=request_id,
                         result=event,
                     )
-                    yield stream_message_response_ta.dump_json(
-                        jsonrpc_response, by_alias=True
-                    ).decode()
+                    yield stream_message_response_ta.dump_json(jsonrpc_response, by_alias=True).decode()
 
             return EventSourceResponse(sse_generator())
         elif a2a_request['method'] == 'tasks/get':
