@@ -138,20 +138,15 @@ class FastA2A(Starlette):
         if a2a_request['method'] == 'message/send':
             jsonrpc_response = await self.task_manager.send_message(a2a_request)
         elif a2a_request['method'] == 'message/stream':
-            # Parse the streaming request
             stream_request = stream_message_request_ta.validate_json(data)
 
-            # Create an async generator wrapper that formats events as JSON-RPC responses
             async def sse_generator():
                 request_id = stream_request.get('id')
                 async for event in self.task_manager.stream_message(stream_request):
-                    # Serialize event to ensure proper camelCase conversion
                     event_dict = stream_event_ta.dump_python(event, mode='json', by_alias=True)
 
-                    # Wrap in JSON-RPC response
                     jsonrpc_response = {'jsonrpc': '2.0', 'id': request_id, 'result': event_dict}
 
-                    # Convert to JSON string
                     yield json.dumps(jsonrpc_response)
 
             return EventSourceResponse(sse_generator())
