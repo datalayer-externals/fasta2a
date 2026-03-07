@@ -31,12 +31,12 @@ class Broker(ABC):
     @abstractmethod
     async def run_task(self, params: TaskSendParams) -> None:
         """Send a task to be executed by the worker."""
-        ...
+        raise NotImplementedError('send_run_task is not implemented yet.')
 
     @abstractmethod
     async def cancel_task(self, params: TaskIdParams) -> None:
         """Cancel a task."""
-        ...
+        raise NotImplementedError('send_cancel_task is not implemented yet.')
 
     @abstractmethod
     async def send_stream_event(self, task_id: str, event: StreamEvent) -> None:
