@@ -14,11 +14,14 @@ from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
 from .broker import Broker
 from .schema import (
+    A2AResponse,
     AgentCapabilities,
     AgentCard,
     AgentInterface,
     AgentProvider,
+    SendMessageResponse,
     Skill,
+    UnsupportedOperationError,
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
@@ -129,12 +132,35 @@ class FastA2A(Starlette):
         data = await request.body()
         a2a_request = a2a_request_ta.validate_json(data)
 
+        jsonrpc_response: A2AResponse
         if a2a_request['method'] == 'message/send':
             jsonrpc_response = await self.task_manager.send_message(a2a_request)
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':
             jsonrpc_response = await self.task_manager.cancel_task(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotification/set':
+            jsonrpc_response = await self.task_manager.set_task_push_notification(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotification/get':
+            jsonrpc_response = await self.task_manager.get_task_push_notification(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotificationConfig/list':
+            jsonrpc_response = await self.task_manager.list_task_push_notification_configs(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotificationConfig/delete':
+            jsonrpc_response = await self.task_manager.delete_task_push_notification_config(a2a_request)
+        elif a2a_request['method'] == 'tasks/list':
+            jsonrpc_response = await self.task_manager.list_tasks(a2a_request)
+        elif a2a_request['method'] == 'message/stream':
+            jsonrpc_response = SendMessageResponse(
+                jsonrpc='2.0',
+                id=a2a_request['id'],
+                error=UnsupportedOperationError(code=-32004, message='This operation is not supported'),
+            )
+        elif a2a_request['method'] == 'tasks/resubscribe':
+            jsonrpc_response = SendMessageResponse(
+                jsonrpc='2.0',
+                id=a2a_request['id'],
+                error=UnsupportedOperationError(code=-32004, message='This operation is not supported'),
+            )
         else:
             raise NotImplementedError(f'Method {a2a_request["method"]} not implemented.')
         return Response(
