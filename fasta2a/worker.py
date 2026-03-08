@@ -54,7 +54,21 @@ class Worker(ABC, Generic[ContextT]):
                     else:
                         assert_never(task_operation)
         except Exception:
-            await self.storage.update_task(task_operation['params']['id'], state='failed')
+            task_id = task_operation['params']['id']
+            task = await self.storage.update_task(task_id, state='failed')
+            from .schema import StreamResponse, TaskStatus, TaskStatusUpdateEvent
+
+            await self.broker.event_bus.emit(
+                task_id,
+                StreamResponse(
+                    status_update=TaskStatusUpdateEvent(
+                        task_id=task_id,
+                        context_id=task['context_id'],
+                        status=TaskStatus(state='failed'),
+                    )
+                ),
+            )
+            await self.broker.event_bus.close(task_id)
 
     @abstractmethod
     async def run_task(self, params: TaskSendParams) -> None: ...
