@@ -10,7 +10,7 @@ import anyio
 from opentelemetry.trace import get_tracer, use_span
 from typing_extensions import assert_never
 
-from .schema import TaskArtifactUpdateEvent, TaskStatusUpdateEvent
+from .schema import StreamResponse, TaskArtifactUpdateEvent, TaskStatusUpdateEvent
 from .storage import ContextT, Storage
 
 if TYPE_CHECKING:
@@ -55,7 +55,21 @@ class Worker(ABC, Generic[ContextT]):
                     else:
                         assert_never(task_operation)
         except Exception:
-            await self.storage.update_task(task_operation['params']['id'], state='failed')
+            task_id = task_operation['params']['id']
+            task = await self.storage.update_task(task_id, state='failed')
+            from .schema import TaskStatus
+
+            await self.broker.event_bus.emit(
+                task_id,
+                StreamResponse(
+                    status_update=TaskStatusUpdateEvent(
+                        task_id=task_id,
+                        context_id=task['context_id'],
+                        status=TaskStatus(state='failed'),
+                    )
+                ),
+            )
+            await self.broker.event_bus.close(task_id)
 
     async def update_task(
         self,
@@ -75,47 +89,49 @@ class Worker(ABC, Generic[ContextT]):
 
         # For non-final updates, publish status first
         if not final:
-            await self.broker.send_stream_event(
+            await self.broker.event_bus.emit(
                 task_id,
-                TaskStatusUpdateEvent(
-                    kind='status-update',
-                    task_id=task_id,
-                    context_id=task['context_id'],
-                    status=task['status'],
-                    final=False,
+                StreamResponse(
+                    status_update=TaskStatusUpdateEvent(
+                        task_id=task_id,
+                        context_id=task['context_id'],
+                        status=task['status'],
+                    ),
                 ),
             )
 
         # Publish message events before final status so subscribers receive them
         if new_messages:
             for message in new_messages:
-                await self.broker.send_stream_event(task_id, message)
+                await self.broker.event_bus.emit(task_id, StreamResponse(message=message))
 
         # Publish artifact events
         if new_artifacts:
             for artifact in new_artifacts:
-                await self.broker.send_stream_event(
+                await self.broker.event_bus.emit(
                     task_id,
-                    TaskArtifactUpdateEvent(
-                        kind='artifact-update',
-                        task_id=task_id,
-                        context_id=task['context_id'],
-                        artifact=artifact,
+                    StreamResponse(
+                        artifact_update=TaskArtifactUpdateEvent(
+                            task_id=task_id,
+                            context_id=task['context_id'],
+                            artifact=artifact,
+                        ),
                     ),
                 )
 
         # For final updates, publish status last (after messages and artifacts)
         if final:
-            await self.broker.send_stream_event(
+            await self.broker.event_bus.emit(
                 task_id,
-                TaskStatusUpdateEvent(
-                    kind='status-update',
-                    task_id=task_id,
-                    context_id=task['context_id'],
-                    status=task['status'],
-                    final=True,
+                StreamResponse(
+                    status_update=TaskStatusUpdateEvent(
+                        task_id=task_id,
+                        context_id=task['context_id'],
+                        status=task['status'],
+                    ),
                 ),
             )
+            await self.broker.event_bus.close(task_id)
 
     @abstractmethod
     async def run_task(self, params: TaskSendParams) -> None: ...

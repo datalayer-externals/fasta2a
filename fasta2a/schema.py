@@ -24,14 +24,8 @@ class AgentCard(TypedDict):
     (e.g. "Agent that helps users with recipes and cooking.")
     """
 
-    url: str
-    """A URL to the address the agent is hosted at."""
-
     version: str
     """The version of the agent - format is up to the provider. (e.g. "1.0.0")"""
-
-    protocol_version: str
-    """The version of the A2A protocol this agent supports."""
 
     provider: NotRequired[AgentProvider]
     """The service provider of the agent."""
@@ -42,16 +36,13 @@ class AgentCard(TypedDict):
     icon_url: NotRequired[str]
     """A URL to an icon for the agent."""
 
-    preferred_transport: NotRequired[str]
-    """The transport of the preferred endpoint. If empty, defaults to JSONRPC."""
-
-    additional_interfaces: NotRequired[list[AgentInterface]]
-    """Announcement of additional supported transports."""
+    supported_interfaces: NotRequired[list[AgentInterface]]
+    """Ordered list of supported interfaces. The first entry is preferred."""
 
     capabilities: AgentCapabilities
     """The capabilities of the agent."""
 
-    security: NotRequired[list[dict[str, list[str]]]]
+    security_requirements: NotRequired[list[SecurityRequirement]]
     """Security requirements for contacting the agent."""
 
     security_schemes: NotRequired[dict[str, SecurityScheme]]
@@ -65,6 +56,9 @@ class AgentCard(TypedDict):
 
     skills: list[Skill]
     """The set of skills, or distinct capabilities, that the agent can perform."""
+
+    signatures: NotRequired[list[AgentCardSignature]]
+    """JSON Web Signatures computed for this AgentCard."""
 
 
 agent_card_ta = pydantic.TypeAdapter(AgentCard)
@@ -90,19 +84,19 @@ class AgentCapabilities(TypedDict):
     push_notifications: NotRequired[bool]
     """Whether the agent can notify updates to client."""
 
-    state_transition_history: NotRequired[bool]
-    """Whether the agent exposes status change history for tasks."""
+    extended_agent_card: NotRequired[bool]
+    """Whether the agent supports providing an extended agent card when authenticated."""
+
+    extensions: NotRequired[list[AgentExtension]]
+    """A list of protocol extensions supported by the agent."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
 class HttpSecurityScheme(TypedDict):
     """HTTP security scheme."""
 
-    type: Literal['http']
-    """The type of the security scheme. Must be 'http'."""
-
     scheme: str
-    """The name of the HTTP Authorization scheme."""
+    """The name of the HTTP Authorization scheme (e.g., 'Bearer')."""
 
     bearer_format: NotRequired[str]
     """A hint to the client to identify how the bearer token is formatted."""
@@ -115,28 +109,124 @@ class HttpSecurityScheme(TypedDict):
 class ApiKeySecurityScheme(TypedDict):
     """API Key security scheme."""
 
-    type: Literal['apiKey']
-    """The type of the security scheme. Must be 'apiKey'."""
-
     name: str
     """The name of the header, query or cookie parameter to be used."""
 
-    in_: Literal['query', 'header', 'cookie']
-    """The location of the API key."""
+    location: str
+    """The location of the API key. Valid values are 'query', 'header', or 'cookie'."""
 
     description: NotRequired[str]
     """Description of this security scheme."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
+class AuthorizationCodeOAuthFlow(TypedDict):
+    """Configuration for the OAuth 2.0 Authorization Code flow."""
+
+    authorization_url: str
+    """The authorization URL to be used for this flow."""
+
+    token_url: str
+    """The token URL to be used for this flow."""
+
+    refresh_url: NotRequired[str]
+    """The URL to be used for obtaining refresh tokens."""
+
+    scopes: NotRequired[dict[str, str]]
+    """The available scopes for the OAuth2 security scheme."""
+
+    pkce_required: NotRequired[bool]
+    """Whether PKCE (RFC 7636) is required for this flow."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ClientCredentialsOAuthFlow(TypedDict):
+    """Configuration for the OAuth 2.0 Client Credentials flow."""
+
+    token_url: str
+    """The token URL to be used for this flow."""
+
+    refresh_url: NotRequired[str]
+    """The URL to be used for obtaining refresh tokens."""
+
+    scopes: NotRequired[dict[str, str]]
+    """The available scopes for the OAuth2 security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class DeviceCodeOAuthFlow(TypedDict):
+    """Configuration for the OAuth 2.0 Device Code flow (RFC 8628)."""
+
+    device_authorization_url: str
+    """The device authorization endpoint URL."""
+
+    token_url: str
+    """The token URL to be used for this flow."""
+
+    refresh_url: NotRequired[str]
+    """The URL to be used for obtaining refresh tokens."""
+
+    scopes: NotRequired[dict[str, str]]
+    """The available scopes for the OAuth2 security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ImplicitOAuthFlow(TypedDict):
+    """Deprecated: Use Authorization Code + PKCE instead."""
+
+    authorization_url: str
+    """The authorization URL to be used for this flow."""
+
+    refresh_url: NotRequired[str]
+    """The URL to be used for obtaining refresh tokens."""
+
+    scopes: NotRequired[dict[str, str]]
+    """The available scopes for the OAuth2 security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class PasswordOAuthFlow(TypedDict):
+    """Deprecated: Use Authorization Code + PKCE or Device Code."""
+
+    token_url: str
+    """The token URL to be used for this flow."""
+
+    refresh_url: NotRequired[str]
+    """The URL to be used for obtaining refresh tokens."""
+
+    scopes: NotRequired[dict[str, str]]
+    """The available scopes for the OAuth2 security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class OAuthFlows(TypedDict):
+    """Configuration for the supported OAuth 2.0 flows."""
+
+    authorization_code: NotRequired[AuthorizationCodeOAuthFlow]
+    """Configuration for the OAuth Authorization Code flow."""
+
+    client_credentials: NotRequired[ClientCredentialsOAuthFlow]
+    """Configuration for the OAuth Client Credentials flow."""
+
+    device_code: NotRequired[DeviceCodeOAuthFlow]
+    """Configuration for the OAuth Device Code flow."""
+
+    implicit: NotRequired[ImplicitOAuthFlow]
+    """Deprecated: Use Authorization Code + PKCE instead."""
+
+    password: NotRequired[PasswordOAuthFlow]
+    """Deprecated: Use Authorization Code + PKCE or Device Code."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
 class OAuth2SecurityScheme(TypedDict):
     """OAuth2 security scheme."""
 
-    type: Literal['oauth2']
-    """The type of the security scheme. Must be 'oauth2'."""
+    flows: NotRequired[OAuthFlows]
+    """An object containing configuration information for the supported OAuth 2.0 flows."""
 
-    flows: dict[str, Any]
-    """An object containing configuration information for the flow types supported."""
+    oauth2_metadata_url: NotRequired[str]
+    """URL to the OAuth2 authorization server metadata (RFC 8414)."""
 
     description: NotRequired[str]
     """Description of this security scheme."""
@@ -146,9 +236,6 @@ class OAuth2SecurityScheme(TypedDict):
 class OpenIdConnectSecurityScheme(TypedDict):
     """OpenID Connect security scheme."""
 
-    type: Literal['openIdConnect']
-    """The type of the security scheme. Must be 'openIdConnect'."""
-
     open_id_connect_url: str
     """OpenId Connect URL to discover OAuth2 configuration values."""
 
@@ -156,25 +243,59 @@ class OpenIdConnectSecurityScheme(TypedDict):
     """Description of this security scheme."""
 
 
-SecurityScheme = Annotated[
-    Union[HttpSecurityScheme, ApiKeySecurityScheme, OAuth2SecurityScheme, OpenIdConnectSecurityScheme],
-    pydantic.Field(discriminator='type'),
-]
-"""A security scheme for authentication."""
+class MutualTlsSecurityScheme(TypedDict):
+    """Mutual TLS security scheme."""
+
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class SecurityScheme(TypedDict):
+    """A security scheme for authentication.
+
+    This is a wrapper type with mutually exclusive optional fields.
+    """
+
+    http_auth_security_scheme: NotRequired[HttpSecurityScheme]
+    """HTTP authentication (Basic, Bearer, etc.)."""
+
+    api_key_security_scheme: NotRequired[ApiKeySecurityScheme]
+    """API key-based authentication."""
+
+    oauth2_security_scheme: NotRequired[OAuth2SecurityScheme]
+    """OAuth 2.0 authentication."""
+
+    open_id_connect_security_scheme: NotRequired[OpenIdConnectSecurityScheme]
+    """OpenID Connect authentication."""
+
+    mtls_security_scheme: NotRequired[MutualTlsSecurityScheme]
+    """Mutual TLS authentication."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class SecurityRequirement(TypedDict):
+    """Defines the security requirements for an agent or skill."""
+
+    schemes: dict[str, list[str]]
+    """A map of security scheme names to the required scopes."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
 class AgentInterface(TypedDict):
     """An interface that the agent supports."""
 
-    transport: str
-    """The transport protocol (e.g., 'jsonrpc', 'websocket')."""
+    protocol_binding: Literal['JSONRPC', 'GRPC', 'HTTP+JSON'] | str
+    """The protocol binding (e.g., 'JSONRPC', 'GRPC', 'HTTP+JSON')."""
 
     url: str
-    """The URL endpoint for this transport."""
+    """The URL endpoint for this interface."""
 
-    description: NotRequired[str]
-    """Description of this interface."""
+    protocol_version: NotRequired[str]
+    """The version of the A2A protocol this interface exposes."""
+
+    tenant: NotRequired[str]
+    """Tenant ID to be used in the request when calling the agent."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -192,6 +313,19 @@ class AgentExtension(TypedDict):
 
     params: NotRequired[dict[str, Any]]
     """Optional configuration for the extension."""
+
+
+class AgentCardSignature(TypedDict):
+    """Represents a JWS signature of an AgentCard (RFC 7515)."""
+
+    protected: str
+    """The protected JWS header, base64url-encoded JSON object."""
+
+    signature: str
+    """The computed signature, base64url-encoded."""
+
+    header: NotRequired[dict[str, Any]]
+    """The unprotected JWS header values."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -228,6 +362,9 @@ class Skill(TypedDict):
     output_modes: list[str]
     """Supported mime types for output data."""
 
+    security_requirements: NotRequired[list[SecurityRequirement]]
+    """Security schemes necessary for this skill."""
+
 
 @pydantic.with_config({'alias_generator': to_camel})
 class Artifact(TypedDict):
@@ -258,70 +395,38 @@ class Artifact(TypedDict):
     extensions: NotRequired[list[str]]
     """Array of extensions."""
 
-    append: NotRequired[bool]
-    """Whether to append this artifact to an existing one."""
 
-    last_chunk: NotRequired[bool]
-    """Whether this is the last chunk of the artifact."""
+class AuthenticationInfo(TypedDict):
+    """Defines authentication details, used for push notifications."""
 
-
-@pydantic.with_config({'alias_generator': to_camel})
-class PushNotificationConfig(TypedDict):
-    """Configuration for push notifications.
-
-    A2A supports a secure notification mechanism whereby an agent can notify a client of an update
-    outside a connected session via a PushNotificationService. Within and across enterprises,
-    it is critical that the agent verifies the identity of the notification service, authenticates
-    itself with the service, and presents an identifier that ties the notification to the executing
-    Task.
-
-    The target server of the PushNotificationService should be considered a separate service, and
-    is not guaranteed (or even expected) to be the client directly. This PushNotificationService is
-    responsible for authenticating and authorizing the agent and for proxying the verified notification
-    to the appropriate endpoint (which could be anything from a pub/sub queue, to an email inbox or
-    other service, etc.).
-
-    For contrived scenarios with isolated client-agent pairs (e.g. local service mesh in a contained
-    VPC, etc.) or isolated environments without enterprise security concerns, the client may choose to
-    simply open a port and act as its own PushNotificationService. Any enterprise implementation will
-    likely have a centralized service that authenticates the remote agents with trusted notification
-    credentials and can handle online/offline scenarios. (This should be thought of similarly to a
-    mobile Push Notification Service).
-    """
-
-    id: NotRequired[str]
-    """Server-assigned identifier."""
-
-    url: str
-    """The URL to send push notifications to."""
-
-    token: NotRequired[str]
-    """Token unique to this task/session."""
-
-    authentication: NotRequired[PushNotificationAuthenticationInfo]
-    """Authentication details for push notifications."""
-
-
-@pydantic.with_config({'alias_generator': to_camel})
-class PushNotificationAuthenticationInfo(TypedDict):
-    """Authentication information for push notifications."""
-
-    schemes: list[str]
-    """A list of supported authentication schemes (e.g., 'Basic', 'Bearer')."""
+    scheme: str
+    """HTTP Authentication Scheme (e.g., 'Bearer', 'Basic', 'Digest')."""
 
     credentials: NotRequired[str]
-    """Optional credentials required by the push notification endpoint."""
+    """Push notification credentials. Format depends on the scheme (e.g., token for Bearer)."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
 class TaskPushNotificationConfig(TypedDict):
-    """Configuration for task push notifications."""
+    """A container associating a push notification configuration with a specific task."""
 
-    id: str
-    """The task id."""
+    id: NotRequired[str]
+    """A unique identifier (e.g. UUID) for this push notification configuration."""
 
-    push_notification_config: PushNotificationConfig
-    """The push notification configuration."""
+    task_id: NotRequired[str]
+    """The ID of the task this configuration is associated with."""
+
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
+
+    url: str
+    """The URL where the notification should be sent."""
+
+    token: NotRequired[str]
+    """A token unique for this task or session."""
+
+    authentication: NotRequired[AuthenticationInfo]
+    """Authentication information required to send the notification."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -343,13 +448,9 @@ class Message(TypedDict):
     parts: list[Part]
     """The parts of the message."""
 
-    kind: Literal['message']
-    """Event type."""
-
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the message."""
 
-    # Additional fields
     message_id: str
     """Identifier created by the message creator."""
 
@@ -366,75 +467,39 @@ class Message(TypedDict):
     """Array of extensions."""
 
 
-class _BasePart(TypedDict):
-    """A base class for all parts."""
+@pydantic.with_config({'alias_generator': to_camel})
+class Part(TypedDict):
+    """A container for a section of communication content.
+
+    Parts can be textual, a file (image, video, etc), or structured data.
+    Fields are mutually exclusive: use `text` for text content, `raw`/`url` for file content,
+    or `data` for structured JSON data.
+    """
+
+    text: NotRequired[str]
+    """The string content of the text part."""
+
+    raw: NotRequired[str]
+    """The raw byte content of a file, base64-encoded."""
+
+    url: NotRequired[str]
+    """A URL pointing to the file's content."""
+
+    data: NotRequired[Any]
+    """Arbitrary structured data as a JSON value."""
+
+    filename: NotRequired[str]
+    """An optional filename for the file (e.g., 'document.pdf')."""
+
+    media_type: NotRequired[str]
+    """The MIME type of the part content (e.g., 'text/plain', 'application/json', 'image/png')."""
 
     metadata: NotRequired[dict[str, Any]]
+    """Optional metadata associated with this part."""
 
-
-@pydantic.with_config({'alias_generator': to_camel})
-class TextPart(_BasePart):
-    """A part that contains text."""
-
-    kind: Literal['text']
-    """The kind of the part."""
-
-    text: str
-    """The text of the part."""
-
-
-@pydantic.with_config({'alias_generator': to_camel})
-class FileWithBytes(TypedDict):
-    """File with base64 encoded data."""
-
-    bytes: str
-    """The base64 encoded content of the file."""
-
-    mime_type: NotRequired[str]
-    """Optional mime type for the file."""
-
-
-@pydantic.with_config({'alias_generator': to_camel})
-class FileWithUri(TypedDict):
-    """File with URI reference."""
-
-    uri: str
-    """The URI of the file."""
-
-    mime_type: NotRequired[str]
-    """The mime type of the file."""
-
-
-@pydantic.with_config({'alias_generator': to_camel})
-class FilePart(_BasePart):
-    """A part that contains a file."""
-
-    kind: Literal['file']
-    """The kind of the part."""
-
-    file: FileWithBytes | FileWithUri
-    """The file content - either bytes or URI."""
-
-
-@pydantic.with_config({'alias_generator': to_camel})
-class DataPart(_BasePart):
-    """A part that contains structured data."""
-
-    kind: Literal['data']
-    """The kind of the part."""
-
-    data: dict[str, Any]
-    """The data of the part."""
-
-
-Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='kind')]
-"""A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
-
-Each Part has its own content type and metadata.
-"""
 
 TaskState: TypeAlias = Literal[
-    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required', 'unknown'
+    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required'
 ]
 """The possible states of a task."""
 
@@ -467,9 +532,6 @@ class Task(TypedDict):
     context_id: str
     """The context the task is associated with."""
 
-    kind: Literal['task']
-    """Event type."""
-
     status: TaskStatus
     """Current status of the task."""
 
@@ -493,14 +555,8 @@ class TaskStatusUpdateEvent(TypedDict):
     context_id: str
     """The context the task is associated with."""
 
-    kind: Literal['status-update']
-    """Event type."""
-
     status: TaskStatus
     """The status of the task."""
-
-    final: bool
-    """Indicates the end of the event stream."""
 
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
@@ -515,9 +571,6 @@ class TaskArtifactUpdateEvent(TypedDict):
 
     context_id: str
     """The context the task is associated with."""
-
-    kind: Literal['artifact-update']
-    """Event type identification."""
 
     artifact: Artifact
     """The artifact that was updated."""
@@ -539,6 +592,9 @@ class TaskIdParams(TypedDict):
     id: str
     """The unique identifier for the task."""
 
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
+
     metadata: NotRequired[dict[str, Any]]
     """Optional metadata associated with the request."""
 
@@ -549,6 +605,52 @@ class TaskQueryParams(TaskIdParams):
 
     history_length: NotRequired[int]
     """Number of recent messages to be retrieved."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ListTasksParams(TypedDict):
+    """Parameters for listing tasks with optional filtering criteria."""
+
+    context_id: NotRequired[str]
+    """Filter tasks by context ID."""
+
+    status: NotRequired[TaskState]
+    """Filter tasks by their current status state."""
+
+    status_timestamp_after: NotRequired[str]
+    """Filter tasks with status updated after this ISO 8601 timestamp."""
+
+    history_length: NotRequired[int]
+    """The maximum number of messages to include in each task's history."""
+
+    include_artifacts: NotRequired[bool]
+    """Whether to include artifacts in the returned tasks. Defaults to false."""
+
+    page_size: NotRequired[int]
+    """The maximum number of tasks to return (1-100, default 50)."""
+
+    page_token: NotRequired[str]
+    """A page token from a previous `ListTasks` call for pagination."""
+
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ListTasksResult(TypedDict):
+    """Result for listing tasks with pagination information."""
+
+    tasks: list[Task]
+    """Array of tasks matching the specified criteria."""
+
+    next_page_token: NotRequired[str]
+    """A token to retrieve the next page of results."""
+
+    page_size: NotRequired[int]
+    """The page size used for this response."""
+
+    total_size: NotRequired[int]
+    """Total number of tasks available (before pagination)."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -564,8 +666,8 @@ class MessageSendConfiguration(TypedDict):
     history_length: NotRequired[int]
     """Number of recent messages to be retrieved."""
 
-    push_notification_config: NotRequired[PushNotificationConfig]
-    """Where the server should send notifications when disconnected."""
+    task_push_notification_config: NotRequired[TaskPushNotificationConfig]
+    """Configuration for the agent to send push notifications for task updates."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -577,6 +679,9 @@ class MessageSendParams(TypedDict):
 
     message: Message
     """The message being sent to the server."""
+
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
 
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
@@ -607,28 +712,59 @@ class TaskSendParams(TypedDict):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class ListTaskPushNotificationConfigParams(TypedDict):
-    """Parameters for getting list of pushNotificationConfigurations associated with a Task."""
+class GetTaskPushNotificationConfigParams(TypedDict):
+    """Parameters for getting a push notification configuration."""
 
     id: str
-    """Task id."""
+    """The resource ID of the configuration to retrieve."""
 
-    metadata: NotRequired[dict[str, Any]]
-    """Extension metadata."""
+    task_id: str
+    """The parent task resource ID."""
+
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ListTaskPushNotificationConfigParams(TypedDict):
+    """Parameters for listing push notification configurations associated with a task."""
+
+    task_id: str
+    """The parent task resource ID."""
+
+    page_size: NotRequired[int]
+    """The maximum number of configurations to return."""
+
+    page_token: NotRequired[str]
+    """A page token received from a previous request."""
+
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ListTaskPushNotificationConfigResult(TypedDict):
+    """Result for listing push notification configurations."""
+
+    configs: list[TaskPushNotificationConfig]
+    """The list of push notification configurations."""
+
+    next_page_token: NotRequired[str]
+    """A token to retrieve the next page of results."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
 class DeleteTaskPushNotificationConfigParams(TypedDict):
-    """Parameters for removing pushNotificationConfiguration associated with a Task."""
+    """Parameters for removing a push notification configuration associated with a task."""
 
     id: str
-    """Task id."""
+    """The resource ID of the configuration to delete."""
 
-    push_notification_config_id: str
-    """The push notification config id to delete."""
+    task_id: str
+    """The parent task resource ID."""
 
-    metadata: NotRequired[dict[str, Any]]
-    """Extension metadata."""
+    tenant: NotRequired[str]
+    """Optional. Tenant ID."""
 
 
 class JSONRPCMessage(TypedDict):
@@ -727,15 +863,43 @@ InvalidAgentResponseError = JSONRPCError[Literal[-32006], Literal['Invalid agent
 SendMessageRequest = JSONRPCRequest[Literal['message/send'], MessageSendParams]
 """A JSON RPC request to send a message."""
 
-SendMessageResponse = JSONRPCResponse[Union[Task, Message], JSONRPCError[Any, Any]]
+
+@pydantic.with_config({'alias_generator': to_camel})
+class SendMessageResult(TypedDict):
+    """The result of a SendMessage request."""
+
+    message: NotRequired[Message]
+    """A message from the agent."""
+
+    task: NotRequired[Task]
+    """The task created or updated by the message."""
+
+
+SendMessageResponse = JSONRPCResponse[SendMessageResult, JSONRPCError[Any, Any]]
 """A JSON RPC response to send a message."""
 
 StreamMessageRequest = JSONRPCRequest[Literal['message/stream'], MessageSendParams]
 """A JSON RPC request to stream a message."""
 
-StreamMessageResponse = JSONRPCResponse[
-    Union[Task, Message, TaskStatusUpdateEvent, TaskArtifactUpdateEvent], JSONRPCError[Any, Any]
-]
+
+@pydantic.with_config({'alias_generator': to_camel})
+class StreamResponse(TypedDict):
+    """A wrapper object used in streaming operations to encapsulate different types of response data."""
+
+    message: NotRequired[Message]
+    """A Message object containing a message from the agent."""
+
+    task: NotRequired[Task]
+    """A Task object containing the current state of the task."""
+
+    status_update: NotRequired[TaskStatusUpdateEvent]
+    """An event indicating a task status update."""
+
+    artifact_update: NotRequired[TaskArtifactUpdateEvent]
+    """An event indicating a task artifact update."""
+
+
+StreamMessageResponse = JSONRPCResponse[StreamResponse, JSONRPCError[Any, Any]]
 """A JSON RPC response to a StreamMessageRequest."""
 
 GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
@@ -756,7 +920,9 @@ SetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/
 SetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig, PushNotificationNotSupportedError]
 """A JSON RPC response to set a task push notification."""
 
-GetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/get'], TaskIdParams]
+GetTaskPushNotificationRequest = JSONRPCRequest[
+    Literal['tasks/pushNotification/get'], GetTaskPushNotificationConfigParams
+]
 """A JSON RPC request to get a task push notification."""
 
 GetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig, PushNotificationNotSupportedError]
@@ -770,10 +936,24 @@ ListTaskPushNotificationConfigRequest = JSONRPCRequest[
 ]
 """A JSON RPC request to list task push notification configs."""
 
+ListTaskPushNotificationConfigResponse = JSONRPCResponse[
+    ListTaskPushNotificationConfigResult, PushNotificationNotSupportedError
+]
+"""A JSON RPC response to list task push notification configs."""
+
 DeleteTaskPushNotificationConfigRequest = JSONRPCRequest[
     Literal['tasks/pushNotificationConfig/delete'], DeleteTaskPushNotificationConfigParams
 ]
 """A JSON RPC request to delete a task push notification config."""
+
+DeleteTaskPushNotificationConfigResponse = JSONRPCResponse[None, PushNotificationNotSupportedError]
+"""A JSON RPC response to delete a task push notification config."""
+
+ListTasksRequest = JSONRPCRequest[Literal['tasks/list'], ListTasksParams]
+"""A JSON RPC request to list tasks."""
+
+ListTasksResponse = JSONRPCResponse[ListTasksResult, JSONRPCError[Any, Any]]
+"""A JSON RPC response to list tasks."""
 
 A2ARequest = Annotated[
     Union[
@@ -786,6 +966,7 @@ A2ARequest = Annotated[
         ResubscribeTaskRequest,
         ListTaskPushNotificationConfigRequest,
         DeleteTaskPushNotificationConfigRequest,
+        ListTasksRequest,
     ],
     Discriminator('method'),
 ]
@@ -798,6 +979,9 @@ A2AResponse: TypeAlias = Union[
     CancelTaskResponse,
     SetTaskPushNotificationResponse,
     GetTaskPushNotificationResponse,
+    ListTaskPushNotificationConfigResponse,
+    DeleteTaskPushNotificationConfigResponse,
+    ListTasksResponse,
 ]
 """A JSON RPC response from the A2A server."""
 
