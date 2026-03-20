@@ -5,27 +5,25 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from sse_starlette import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
 from .broker import Broker
 from .schema import (
+    A2AResponse,
     AgentCapabilities,
     AgentCard,
     AgentExtension,
+    AgentInterface,
     AgentProvider,
     Skill,
-    StreamMessageResponse,
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
-    stream_message_request_ta,
-    stream_message_response_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager
@@ -107,9 +105,10 @@ class FastA2A(Starlette):
             agent_card = AgentCard(
                 name=self.name,
                 description=self.description or 'An AI agent exposed as an A2A agent.',
-                url=self.url,
                 version=self.version,
-                protocol_version='0.3.0',
+                supported_interfaces=[
+                    AgentInterface(protocol_binding='JSONRPC', url=self.url, protocol_version='1.0'),
+                ],
                 skills=self.skills,
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
@@ -149,26 +148,33 @@ class FastA2A(Starlette):
         # Stash on the request state so workers / handlers can inspect them
         request.state.activated_extensions = activated_extensions
 
+        jsonrpc_response: A2AResponse
         if a2a_request['method'] == 'message/send':
             jsonrpc_response = await self.task_manager.send_message(a2a_request)
         elif a2a_request['method'] == 'message/stream':
-            stream_request = stream_message_request_ta.validate_json(data)
-
-            async def sse_generator():
-                request_id = stream_request.get('id')
-                async for event in self.task_manager.stream_message(stream_request):
-                    jsonrpc_response = StreamMessageResponse(
-                        jsonrpc='2.0',
-                        id=request_id,
-                        result=event,
-                    )
-                    yield stream_message_response_ta.dump_json(jsonrpc_response, by_alias=True).decode()
-
-            return EventSourceResponse(sse_generator())
+            return StreamingResponse(
+                self.task_manager.stream_message(a2a_request),
+                media_type='text/event-stream',
+            )
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':
             jsonrpc_response = await self.task_manager.cancel_task(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotification/set':
+            jsonrpc_response = await self.task_manager.set_task_push_notification(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotification/get':
+            jsonrpc_response = await self.task_manager.get_task_push_notification(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotificationConfig/list':
+            jsonrpc_response = await self.task_manager.list_task_push_notification_configs(a2a_request)
+        elif a2a_request['method'] == 'tasks/pushNotificationConfig/delete':
+            jsonrpc_response = await self.task_manager.delete_task_push_notification_config(a2a_request)
+        elif a2a_request['method'] == 'tasks/list':
+            jsonrpc_response = await self.task_manager.list_tasks(a2a_request)
+        elif a2a_request['method'] == 'tasks/resubscribe':
+            return StreamingResponse(
+                self.task_manager.resubscribe_task(a2a_request),
+                media_type='text/event-stream',
+            )
         else:
             raise NotImplementedError(f'Method {a2a_request["method"]} not implemented.')
         return Response(
